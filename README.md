@@ -111,7 +111,7 @@ Quests are saved and loaded in JSON format. Each quest is represented as an obje
     "dependencies": ["list_of_string_dependency_ids"],
     "completed": boolean_completion_status
   }
-  // ... more quest objects
+  
 ]
 ```
 
