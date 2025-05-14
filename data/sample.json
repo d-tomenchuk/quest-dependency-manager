@@ -1,0 +1,26 @@
+[
+  {
+    "id": "quest_0",
+    "title": "Hero's Awakening",
+    "description": "The hero wakes up in a village and learns of an impending threat.",
+    "dependencies": []
+  },
+  {
+    "id": "quest_1",
+    "title": "Find the Ancestral Sword",
+    "description": "The weapon is located in an ancient forest, guarded by a monster.",
+    "dependencies": ["quest_0"]
+  },
+  {
+    "id": "quest_2",
+    "title": "Explore the Ruins",
+    "description": "Gather information about the ancient people to understand the source of evil.",
+    "dependencies": ["quest_0"]
+  },
+  {
+    "id": "quest_3",
+    "title": "Fight the Shadow",
+    "description": "The final battle with the main enemy.",
+    "dependencies": ["quest_1", "quest_2"]
+  }
+]
