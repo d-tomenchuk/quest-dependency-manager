@@ -130,3 +130,7 @@ cython_debug/
 # Vim
 *.swp
 *.swo
+
+# Test artifacts
+test_*.json 
+data_test_save/ 

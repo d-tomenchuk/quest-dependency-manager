@@ -2,6 +2,7 @@ import unittest
 from quest import Quest 
 from manager import QuestManager
 import os
+import json
 
 class TestQuest(unittest.TestCase):
 
@@ -155,7 +156,8 @@ class TestQuestManager(unittest.TestCase):
     def test_complete_quest_dependencies_not_met(self):
         self.manager.add_quest(self.q1)
         self.manager.add_quest(self.q2) # q2 depends on q1
-        with self.assertRaisesRegex(PermissionError, "Cannot complete quest 'q2'. Dependencies not met: \\['q1'\\]"):
+        expected_error_regex = "Cannot complete quest 'Quest 2' \\(ID: q2\\). Dependencies not met: \\['q1'\\]"
+        with self.assertRaisesRegex(PermissionError, expected_error_regex):
             self.manager.complete_quest("q2")
         self.assertFalse(self.q2.completed)
 
@@ -274,6 +276,188 @@ class TestQuestManager(unittest.TestCase):
         self.assertIn("q_non", order)
         self.assertIn("q1", order)
 
+    def tearDown(self):
+
+        test_files_to_remove = [
+            "test_quests.json",
+            "test_invalid_format.json",
+            "test_decode_error.json",
+            "test_missing_keys.json",
+            "test_sample_like.json",
+            os.path.join("data_test_save", "nested_quests.json")
+        ]
+        for test_file in test_files_to_remove:
+            if os.path.exists(test_file):
+                try:
+                    os.remove(test_file)
+                except OSError as e:
+                    print(f"Warning: Could not remove test file {test_file}: {e}")
+        
+        
+        data_dir_for_tests = "data_test_save"
+        if os.path.exists(data_dir_for_tests):
+            try:
+                if not os.listdir(data_dir_for_tests): 
+                    os.rmdir(data_dir_for_tests)
+            except OSError as e:
+                 print(f"Warning: Could not remove test directory {data_dir_for_tests}: {e}")
+
+
+    def test_save_and_load_quests(self):
+        test_filepath = "test_quests.json"
+        if os.path.exists(test_filepath): 
+            os.remove(test_filepath)
+
+ 
+        q1 = Quest(id="s_q1", title="Save Q1", description="Desc Q1", completed=False)
+        q2 = Quest(id="s_q2", title="Save Q2", description="Desc Q2", dependencies=["s_q1"], completed=True)
+        
+        self.manager.add_quest(q1)
+        self.manager.add_quest(q2)
+                                  
+        self.manager.save_quests(test_filepath)
+        self.assertTrue(os.path.exists(test_filepath))
+
+        
+        new_manager = QuestManager()
+        new_manager.load_quests(test_filepath)
+
+        self.assertEqual(len(new_manager._quests), 2)
+        
+        loaded_q1 = new_manager.get_quest("s_q1")
+        loaded_q2 = new_manager.get_quest("s_q2")
+
+        self.assertIsNotNone(loaded_q1)
+        self.assertEqual(loaded_q1.title, "Save Q1")
+        self.assertFalse(loaded_q1.completed, "Loaded q1 should not be completed")
+        self.assertNotIn("s_q1", new_manager._completed_quest_ids, "s_q1 should not be in completed_ids set")
+
+        self.assertIsNotNone(loaded_q2)
+        self.assertEqual(loaded_q2.title, "Save Q2")
+        self.assertTrue(loaded_q2.completed, "Loaded q2 should be completed as per saved data")
+        self.assertEqual(loaded_q2.dependencies, {"s_q1"})
+        self.assertIn("s_q2", new_manager._completed_quest_ids, "s_q2 should be in completed_ids set after load")
+
+    def test_save_quests_creates_directory(self):
+        
+        nested_filepath = os.path.join("data_test_save", "nested_quests.json")
+        if os.path.exists(nested_filepath): os.remove(nested_filepath)
+        if os.path.exists(os.path.dirname(nested_filepath)): os.rmdir(os.path.dirname(nested_filepath))
+        
+        
+        self.manager.add_quest(Quest(id="q_temp", title="Temp", description="Temp quest"))
+        
+        self.manager.save_quests(nested_filepath)
+        self.assertTrue(os.path.exists(nested_filepath))
+        
+
+
+    def test_load_quests_file_not_found(self):
+        with self.assertRaises(FileNotFoundError):
+            self.manager.load_quests("non_existent_file_definitely.json")
+
+    def test_load_quests_invalid_json_structure_not_a_list(self):
+        test_filepath = "test_invalid_format.json"
+        with open(test_filepath, 'w', encoding='utf-8') as f:
+            f.write('{"not": "a list"}') 
+        
+        with self.assertRaisesRegex(ValueError, "Invalid format: Expected a list of quests"):
+            self.manager.load_quests(test_filepath)
+        
+
+    def test_load_quests_json_decode_error(self):
+        test_filepath = "test_decode_error.json"
+        with open(test_filepath, 'w', encoding='utf-8') as f:
+            f.write('this is not valid json {')
+        
+        with self.assertRaisesRegex(ValueError, "Error decoding JSON"):
+            self.manager.load_quests(test_filepath)
+        
+
+    def test_load_quests_missing_required_keys_in_quest_data(self):
+        test_filepath = "test_missing_keys.json"
+        
+        data_with_missing_key = [
+            {"id": "q_ok", "title":"OK Quest", "description":"This is fine", "dependencies":[], "completed":False},
+            {"id": "q_bad", "description": "desc only no title"}
+        ]
+        with open(test_filepath, 'w', encoding='utf-8') as f:
+            json.dump(data_with_missing_key, f)
+        
+        self.manager.load_quests(test_filepath)
+        self.assertEqual(len(self.manager._quests), 1, "Only one quest should be loaded")
+        self.assertIsNotNone(self.manager.get_quest("q_ok"))
+        self.assertIsNone(self.manager.get_quest("q_bad"))
+
+
+    def test_load_from_sample_json_like_structure_no_completed_field(self):
+
+        sample_like_filepath = "test_sample_like.json"
+        sample_data = [
+            {"id": "sample_0", "title": "Hero's Awakening", "description": "Desc", "dependencies": []},
+            {"id": "sample_1", "title": "Find Sword", "description": "Desc", "dependencies": ["sample_0"]}
+        ] 
+        with open(sample_like_filepath, 'w', encoding='utf-8') as f:
+            json.dump(sample_data, f)
+
+        self.manager.load_quests(sample_like_filepath)
+        self.assertEqual(len(self.manager._quests), 2)
+        
+        q0 = self.manager.get_quest("sample_0")
+        self.assertIsNotNone(q0)
+        self.assertFalse(q0.completed, "Quest loaded without 'completed' field should default to False")
+        self.assertNotIn("sample_0", self.manager._completed_quest_ids)
+
+        q1 = self.manager.get_quest("sample_1")
+        self.assertIsNotNone(q1)
+        self.assertFalse(q1.completed)
+        self.assertEqual(q1.dependencies, {"sample_0"})
+        self.assertNotIn("sample_1", self.manager._completed_quest_ids)
+        
+
+    def test_load_quests_duplicate_ids_in_file(self):
+        test_filepath = "test_duplicate_ids_in_file.json"
+        duplicate_id_data = [
+            {"id": "dup1", "title": "First Dup", "description": "Desc1", "completed": False},
+            {"id": "dup1", "title": "Second Dup", "description": "Desc2", "completed": True}, 
+            {"id": "uniq1", "title": "Unique", "description": "DescUniq", "completed": False}
+        ]
+        with open(test_filepath, 'w', encoding='utf-8') as f:
+            json.dump(duplicate_id_data, f)
+
+        self.manager.load_quests(test_filepath)
+        self.assertEqual(len(self.manager._quests), 2)
+        
+        loaded_dup1 = self.manager.get_quest("dup1")
+        self.assertIsNotNone(loaded_dup1)
+        self.assertEqual(loaded_dup1.title, "First Dup") 
+        self.assertFalse(loaded_dup1.completed)
+        self.assertNotIn("dup1", self.manager._completed_quest_ids) 
+
+        self.assertIsNotNone(self.manager.get_quest("uniq1"))
+        
+
+    def test_load_quests_removes_dangling_dependencies(self):
+        test_filepath = "test_dangling_deps.json"
+        data_with_dangling_dep = [
+            {"id": "q_valid", "title": "Valid Quest", "description": "Desc", "dependencies": ["non_existent_dep_id"], "completed": False},
+            {"id": "q_another", "title": "Another", "description": "Desc", "dependencies": [], "completed": True}
+        ]
+        with open(test_filepath, 'w', encoding='utf-8') as f:
+            json.dump(data_with_dangling_dep, f)
+
+        self.manager.load_quests(test_filepath)
+        self.assertEqual(len(self.manager._quests), 2)
+
+        loaded_q_valid = self.manager.get_quest("q_valid")
+        self.assertIsNotNone(loaded_q_valid)
+        self.assertEqual(loaded_q_valid.dependencies, set(), "Dangling dependency should have been removed")
+
+        loaded_q_another = self.manager.get_quest("q_another")
+        self.assertIsNotNone(loaded_q_another)
+        self.assertTrue(loaded_q_another.completed)
+        self.assertIn("q_another", self.manager._completed_quest_ids)
+        
 
 if __name__ == '__main__':
 
