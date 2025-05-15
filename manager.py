@@ -2,66 +2,187 @@ from typing import Dict, List, Optional, Set
 from collections import deque
 import json
 import os
-import logging 
+import logging
+from datetime import datetime, timezone  
 
 logger = logging.getLogger(__name__)
 
-from quest import Quest 
+from quest import Quest
+
+try:
+
+    from enums.quest_enums import QuestStatus, QuestType
+
+except ImportError:
+    logger.critical("CRITICAL: Could not import QuestStatus and QuestType from enums.quest_enums. "
+                    "QuestManager may not function correctly. Ensure enums package is correct.")
+
+    QuestStatus = type("QuestStatus", (object,), {
+        "NOT_STARTED": "not_started",
+        "IN_PROGRESS": "in_progress",
+        "COMPLETED": "completed",
+        "FAILED": "failed"
+    })
+    QuestType = type("QuestType", (object,), {
+        "MAIN": "main",
+        "SIDE": "side",
+        "OPTIONAL": "optional",
+        "REPEATABLE": "repeatable",
+        "TIMED": "timed"
+    })
 
 class QuestManager:
     def __init__(self):
         self._quests: Dict[str, Quest] = {}
         self._completed_quest_ids: Set[str] = set()
-        logger.debug("QuestManager initialized.") 
+        logger.debug("QuestManager initialized.")
 
     def add_quest(self, quest: Quest) -> None:
+
         logger.debug(f"Attempting to add quest with ID: {quest.id}")
         if quest.id in self._quests:
-            
             msg = f"Quest with ID '{quest.id}' already exists."
-            logger.warning(msg) 
+            logger.warning(msg)
             raise ValueError(msg)
+
         
         for dep_id in quest.dependencies:
             if not isinstance(dep_id, str) or not dep_id.strip():
                 msg = f"Invalid dependency ID '{dep_id}' for quest '{quest.id}'. Must be a non-empty string."
-                logger.error(msg) 
+                logger.error(msg)
                 raise ValueError(msg)
 
         self._quests[quest.id] = quest
-        logger.info(f"Quest '{quest.title}' (ID: {quest.id}) added to manager.")
+        
+        
+        if quest.status == QuestStatus.COMPLETED:
+            self._completed_quest_ids.add(quest.id)
+            logger.debug(f"Quest '{quest.title}' (ID: {quest.id}) added as already completed.")
+        
+        logger.info(f"Quest '{quest.title}' (ID: {quest.id}, Status: {quest.status}, Type: {quest.quest_type}) added to manager.")
 
     def get_quest(self, quest_id: str) -> Optional[Quest]:
         logger.debug(f"Attempting to get quest with ID: {quest_id}")
         return self._quests.get(quest_id)
+    
+    def start_quest(self, quest_id: str) -> None:
+        logger.debug(f"Attempting to start quest with ID: {quest_id}")
+        quest = self.get_quest(quest_id)
+        if not quest:
+            msg = f"Quest with ID '{quest_id}' not found, cannot start."
+            logger.warning(msg)
+            raise ValueError(msg)
+
+        if quest.status != QuestStatus.NOT_STARTED:
+            msg = f"Quest '{quest.title}' (ID: {quest_id}) is not in NOT_STARTED state (current: {quest.status}). Cannot start."
+            logger.warning(msg)
+            raise PermissionError(msg)
+
+        if not quest.is_unlocked(self._completed_quest_ids):
+            unmet_deps = sorted(list(d_id for d_id in quest.dependencies if d_id not in self._completed_quest_ids))
+            msg = (f"Cannot start quest '{quest.title}' (ID: {quest_id}). "
+                   f"Dependencies not met: {unmet_deps}")
+            logger.warning(msg)
+            raise PermissionError(msg)
+
+        quest.update_status(QuestStatus.IN_PROGRESS)
+        if quest.quest_type == QuestType.TIMED:
+            quest.set_start_time(datetime.now(timezone.utc))
+            logger.info(f"Quest '{quest.title}' (ID: {quest_id}, Type: TIMED) started at {quest.start_time}.")
+        else:
+            logger.info(f"Quest '{quest.title}' (ID: {quest_id}) status changed to IN_PROGRESS.")
+
 
     def complete_quest(self, quest_id: str) -> None:
+        
         logger.debug(f"Attempting to complete quest with ID: {quest_id}")
         quest = self.get_quest(quest_id)
         if not quest:
             msg = f"Quest with ID '{quest_id}' not found for completion."
             logger.warning(msg)
             raise ValueError(msg)
-        if quest.completed:
+        
+        if quest.status == QuestStatus.COMPLETED:
             logger.info(f"Quest '{quest.title}' (ID: {quest_id}) is already completed. No action taken.")
-            return 
-
+            return
+        
+        if quest.status != QuestStatus.IN_PROGRESS:
+            msg = f"Quest '{quest.title}' (ID: {quest_id}) cannot be completed. Current status: {quest.status} (expected IN_PROGRESS)."
+            logger.warning(msg)
+            raise PermissionError(msg)
+        
         if not quest.is_unlocked(self._completed_quest_ids):
             unmet_deps = sorted(list(d_id for d_id in quest.dependencies if d_id not in self._completed_quest_ids))
             msg = (f"Cannot complete quest '{quest.title}' (ID: {quest_id}). "
-                   f"Dependencies not met: {unmet_deps}")
+                   f"Dependencies not met: {unmet_deps}. This check is a safeguard.")
             logger.warning(msg)
             raise PermissionError(msg)
 
-        quest.mark_as_completed()
+        quest.update_status(QuestStatus.COMPLETED)
         self._completed_quest_ids.add(quest_id)
-        logger.info(f"Quest '{quest.title}' (ID: {quest_id}) marked as completed in manager.")
+        logger.info(f"Quest '{quest.title}' (ID: {quest_id}) marked as COMPLETED in manager.")
+
+    def fail_quest(self, quest_id: str) -> None:
+
+        logger.debug(f"Attempting to fail quest with ID: {quest_id}")
+        quest = self.get_quest(quest_id)
+        if not quest:
+            msg = f"Quest with ID '{quest_id}' not found, cannot fail."
+            logger.warning(msg)
+            raise ValueError(msg)
+
+        if quest.status == QuestStatus.FAILED or quest.status == QuestStatus.COMPLETED:
+            logger.info(f"Quest '{quest.title}' (ID: {quest_id}) is already FAILED or COMPLETED. No action taken.")
+            return
+        
+        if quest.status not in [QuestStatus.NOT_STARTED, QuestStatus.IN_PROGRESS]:
+            msg = f"Quest '{quest.title}' (ID: {quest_id}) cannot be failed. Current status: {quest.status}."
+            logger.warning(msg)
+            raise PermissionError(msg)
+
+        quest.update_status(QuestStatus.FAILED)
+        if quest_id in self._completed_quest_ids:
+            self._completed_quest_ids.discard(quest_id)
+            logger.warning(f"Quest '{quest.title}' (ID: {quest_id}) was in completed_ids but is now FAILED. Removed from completed_ids.")
+        
+        logger.info(f"Quest '{quest.title}' (ID: {quest_id}) marked as FAILED.")
+    
+    def reset_repeatable_quest(self, quest_id: str) -> None:
+
+        logger.debug(f"Attempting to reset repeatable quest with ID: {quest_id}")
+        quest = self.get_quest(quest_id)
+        if not quest:
+            msg = f"Quest with ID '{quest_id}' not found, cannot reset."
+            logger.warning(msg)
+            raise ValueError(msg)
+
+        if quest.quest_type != QuestType.REPEATABLE:
+            msg = f"Quest '{quest.title}' (ID: {quest_id}) is not REPEATABLE. Cannot reset."
+            logger.warning(msg)
+            raise PermissionError(msg)
+
+        if quest.status != QuestStatus.COMPLETED: 
+            msg = (f"Repeatable quest '{quest.title}' (ID: {quest_id}) is not COMPLETED (current: {quest.status}). "
+                   "Cannot reset until completed first.")
+            logger.warning(msg)
+            raise PermissionError(msg)
+        
+        quest.update_status(QuestStatus.NOT_STARTED)
+        quest.clear_start_time() 
+        
+        if quest_id in self._completed_quest_ids:
+            self._completed_quest_ids.discard(quest_id)
+        
+        logger.info(f"Repeatable quest '{quest.title}' (ID: {quest_id}) has been reset to NOT_STARTED.")
+
+
 
     def list_available_quests(self) -> List[Quest]:
-        logger.debug("Listing available quests.")
+        
+        logger.debug("Listing available quests (status NOT_STARTED and dependencies met).")
         available = []
         for quest in self._quests.values():
-            if not quest.completed and quest.is_unlocked(self._completed_quest_ids):
+            if quest.status == QuestStatus.NOT_STARTED and quest.is_unlocked(self._completed_quest_ids):
                 available.append(quest)
         logger.debug(f"Found {len(available)} available quests.")
         return sorted(available, key=lambda q: q.title)
@@ -137,6 +258,7 @@ class QuestManager:
 
 
     def save_quests(self, filepath: str) -> None:
+
         logger.info(f"Attempting to save quests to: {filepath}")
         directory = os.path.dirname(filepath)
         if directory and not os.path.exists(directory):
@@ -161,6 +283,7 @@ class QuestManager:
             raise TypeError(f"Error serializing quests to JSON: {e}")
 
     def load_quests(self, filepath: str) -> None:
+
         logger.info(f"Attempting to load quests from: {filepath}")
         if not os.path.exists(filepath):
             logger.warning(f"File not found for loading: {filepath}")
@@ -183,7 +306,7 @@ class QuestManager:
         
         logger.debug(f"Clearing current quest data before loading from {filepath}.")
         self._quests.clear()
-        self._completed_quest_ids.clear()
+        self._completed_quest_ids.clear() 
         
         temp_quests_to_add: List[Quest] = []
         quest_ids_from_file: Set[str] = set()
@@ -204,14 +327,17 @@ class QuestManager:
         
         for quest in temp_quests_to_add:
             self._quests[quest.id] = quest
-            if quest.completed:
-                self._completed_quest_ids.add(quest.id)
-            logger.debug(f"Loaded quest '{quest.title}' (ID: {quest.id}, Completed: {quest.completed}) from {filepath}.")
+
+        for quest_id, quest_obj in self._quests.items():
+            if quest_obj.status == QuestStatus.COMPLETED:
+                self._completed_quest_ids.add(quest_id)
+            logger.debug(f"Loaded quest '{quest_obj.title}' (ID: {quest_id}, Status: {quest_obj.status}, Type: {quest_obj.quest_type}) from {filepath}.")
         
         dangling_deps_removed_count = 0
         for quest_id, quest_obj in self._quests.items():
             original_deps_count = len(quest_obj.dependencies)
-            for dep_id in list(quest_obj.dependencies):
+
+            for dep_id in list(quest_obj.dependencies): 
                 if dep_id not in self._quests:
                     logger.warning(f"Quest '{quest_obj.title}' (ID: {quest_id}) from {filepath} has a dependency on a non-existent quest ID '{dep_id}'. Removing this dependency.")
                     quest_obj.remove_dependency(dep_id)
@@ -221,4 +347,5 @@ class QuestManager:
         if dangling_deps_removed_count > 0:
             logger.info(f"Removed {dangling_deps_removed_count} dangling dependencies after loading from {filepath}.")
 
-        logger.info(f"Quests successfully loaded from {filepath}. Total quests in manager: {len(self._quests)}. Completed: {len(self._completed_quest_ids)}.")
+        logger.info(f"Quests successfully loaded from {filepath}. Total quests in manager: {len(self._quests)}. "
+                    f"Completed (status COMPLETED): {len(self._completed_quest_ids)}.")

@@ -3,12 +3,11 @@ import sys
 import os
 from fastapi import FastAPI, HTTPException, Body, status, Depends, Security
 from fastapi.security.api_key import APIKeyHeader
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional 
 
 try:
     from dotenv import load_dotenv
     load_dotenv()
-    print("Loaded environment variables from .env file.")
 except ImportError:
     print("python-dotenv not installed, .env file will not be loaded.")
 
@@ -22,24 +21,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from quest import Quest
+from quest import Quest 
+
+try:
+    from enums.quest_enums import QuestStatus, QuestType
+except ImportError:
+    logger.critical("CRITICAL: Core enums QuestStatus, QuestType from enums.quest_enums could not be imported in api_main.py.")
+    QuestStatus = object() 
+    QuestType = object()
+
+
 from manager import QuestManager
-from api_models import (
+from api_models import ( 
     QuestCreateSchema,
     QuestResponseSchema,
     FilePathSchema,
     CycleCheckResponseSchema,
-    CompletionOrderResponseSchema
+    CompletionOrderResponseSchema,
+    QuestOperationSuccessResponse, 
+    APIQuestStatus 
 )
 
 app = FastAPI(
     title="Quest Dependency Manager API",
     description="API for managing quest dependencies, completion, and analysis. Some write operations require API Key authentication via X-API-Key header.",
-    version="1.0.0"
+    version="1.1.0" 
 )
 
 quest_manager = QuestManager()
-DEFAULT_QUEST_FILE = "data/quest_data.json"
+DEFAULT_QUEST_FILE = "data/quest_data.json" 
 
 try:
     if os.path.exists(DEFAULT_QUEST_FILE):
@@ -53,7 +63,7 @@ except Exception as e:
 API_KEY_NAME = "X-API-Key"
 api_key_header_auth_scheme = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-VALID_API_KEYS_ENV = os.getenv("VALID_API_KEYS", "entwicklungsschluessel")
+VALID_API_KEYS_ENV = os.getenv("VALID_API_KEYS", "entwicklungsschluessel") 
 VALID_API_KEYS = {key.strip() for key in VALID_API_KEYS_ENV.split(',') if key.strip()}
 
 if not VALID_API_KEYS:
@@ -82,12 +92,21 @@ async def get_api_key(api_key_header: Optional[str] = Security(api_key_header_au
 async def create_quest_api(quest_data: QuestCreateSchema):
     logger.debug(f"Authenticated request to create quest with id: {quest_data.id}")
     try:
-        new_quest = Quest(
-            id=quest_data.id,
-            title=quest_data.title,
-            description=quest_data.description,
-            dependencies=quest_data.dependencies
-        )
+        
+        new_quest_params = {
+            "id": quest_data.id,
+            "title": quest_data.title,
+            "description": quest_data.description,
+            "dependencies": quest_data.dependencies or [], 
+            "quest_type": quest_data.quest_type.value if quest_data.quest_type else QuestType.SIDE.value, 
+            "rewards": quest_data.rewards or [],
+            "consequences": quest_data.consequences or [],
+            "failure_conditions": quest_data.failure_conditions or []
+            
+        }
+
+        new_quest = Quest(**new_quest_params)
+        
         quest_manager.add_quest(new_quest)
         logger.info(f"Quest '{new_quest.id}' titled '{new_quest.title}' created successfully by authenticated client.")
         return QuestResponseSchema.model_validate(new_quest)
@@ -98,46 +117,113 @@ async def create_quest_api(quest_data: QuestCreateSchema):
         logger.error(f"Unexpected error creating quest (ID: {quest_data.id}) by authenticated client: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the quest.")
 
+
+@app.post("/quests/{quest_id}/start", response_model=QuestResponseSchema, tags=["Quests Management (Protected)"], dependencies=[Depends(get_api_key)])
+async def start_quest_api(quest_id: str):
+    logger.debug(f"Authenticated request to start quest: {quest_id}")
+    try:
+        quest_manager.start_quest(quest_id)
+        started_quest = quest_manager.get_quest(quest_id)
+        if not started_quest: 
+            logger.error(f"Quest '{quest_id}' reported as started by manager but then not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Quest '{quest_id}' not found after attempting to start.")
+        logger.info(f"Quest '{quest_id}' (title: '{started_quest.title}') started successfully.")
+        return QuestResponseSchema.model_validate(started_quest)
+    except ValueError as e: 
+        logger.warning(f"Failed to start quest '{quest_id}': {e}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e: 
+        logger.warning(f"Permission denied to start quest '{quest_id}': {e}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error starting quest '{quest_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while starting quest '{quest_id}'.")
+
+
 @app.post("/quests/{quest_id}/complete", response_model=QuestResponseSchema, tags=["Quests Management (Protected)"], dependencies=[Depends(get_api_key)])
 async def complete_quest_api(quest_id: str):
     logger.debug(f"Authenticated request to complete quest: {quest_id}")
     try:
         quest_manager.complete_quest(quest_id)
-        completed_quest = quest_manager.get_quest(quest_id)
+        completed_quest = quest_manager.get_quest(quest_id) 
         if not completed_quest:
-            logger.error(f"Quest '{quest_id}' reported as completed by manager but then not found (authenticated request).")
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Quest '{quest_id}' completed but then not found.")
-        logger.info(f"Quest '{quest_id}' marked as completed successfully via authenticated API call.")
+            logger.error(f"Quest '{quest_id}' reported as completed by manager but then not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Quest '{quest_id}' not found after completion attempt.")
+        logger.info(f"Quest '{quest_id}' (title: '{completed_quest.title}') marked as completed successfully.")
         return QuestResponseSchema.model_validate(completed_quest)
     except ValueError as e:
-        logger.warning(f"Attempt to complete quest failed (authenticated). Quest ID '{quest_id}' not found: {e}")
+        logger.warning(f"Attempt to complete quest '{quest_id}' failed, quest not found: {e}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionError as e:
-        logger.warning(f"Attempt to complete quest '{quest_id}' failed due to unmet dependencies (authenticated): {e}")
+        logger.warning(f"Attempt to complete quest '{quest_id}' failed due to unmet dependencies or wrong status: {e}")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error completing quest '{quest_id}' (authenticated): {e}", exc_info=True)
+        logger.error(f"Unexpected error completing quest '{quest_id}': {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while completing quest '{quest_id}'.")
 
-@app.post("/data/save", status_code=status.HTTP_200_OK, tags=["Data Management (Protected)"], dependencies=[Depends(get_api_key)])
+
+@app.post("/quests/{quest_id}/fail", response_model=QuestResponseSchema, tags=["Quests Management (Protected)"], dependencies=[Depends(get_api_key)])
+async def fail_quest_api(quest_id: str):
+    logger.debug(f"Authenticated request to fail quest: {quest_id}")
+    try:
+        quest_manager.fail_quest(quest_id)
+        failed_quest = quest_manager.get_quest(quest_id)
+        if not failed_quest:
+            logger.error(f"Quest '{quest_id}' reported as failed by manager but then not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Quest '{quest_id}' not found after attempting to fail.")
+        logger.info(f"Quest '{quest_id}' (title: '{failed_quest.title}') marked as failed successfully.")
+        return QuestResponseSchema.model_validate(failed_quest)
+    except ValueError as e:
+        logger.warning(f"Failed to fail quest '{quest_id}', quest not found: {e}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e:
+        logger.warning(f"Permission denied to fail quest '{quest_id}': {e}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error failing quest '{quest_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while failing quest '{quest_id}'.")
+
+
+@app.post("/quests/{quest_id}/reset", response_model=QuestResponseSchema, tags=["Quests Management (Protected)"], dependencies=[Depends(get_api_key)])
+async def reset_quest_api(quest_id: str):
+    logger.debug(f"Authenticated request to reset repeatable quest: {quest_id}")
+    try:
+        quest_manager.reset_repeatable_quest(quest_id)
+        reset_quest = quest_manager.get_quest(quest_id)
+        if not reset_quest:
+            logger.error(f"Quest '{quest_id}' reported as reset by manager but then not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Quest '{quest_id}' not found after attempting to reset.")
+        logger.info(f"Quest '{quest_id}' (title: '{reset_quest.title}') reset successfully (if repeatable).")
+        return QuestResponseSchema.model_validate(reset_quest)
+    except ValueError as e: 
+        logger.warning(f"Failed to reset quest '{quest_id}': {e}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PermissionError as e: 
+        logger.warning(f"Permission denied to reset quest '{quest_id}': {e}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error resetting quest '{quest_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while resetting quest '{quest_id}'.")
+
+@app.post("/data/save", response_model=QuestOperationSuccessResponse, status_code=status.HTTP_200_OK, tags=["Data Management (Protected)"], dependencies=[Depends(get_api_key)])
 async def save_quests_to_file_api(payload: FilePathSchema):
     logger.info(f"Authenticated request to save quests to file: {payload.filepath}")
     try:
         quest_manager.save_quests(payload.filepath)
         logger.info(f"Quests successfully saved to {payload.filepath} via authenticated API call.")
-        return {"message": f"Quests successfully saved to {payload.filepath}"}
+        return QuestOperationSuccessResponse(message=f"Quests successfully saved to {payload.filepath}", quest_id="N/A")
     except (IOError, TypeError) as e:
         logger.error(f"Error saving quests to {payload.filepath} (authenticated): {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error saving quests: {str(e)}")
 
-@app.post("/data/load", status_code=status.HTTP_200_OK, tags=["Data Management (Protected)"], dependencies=[Depends(get_api_key)])
+@app.post("/data/load", response_model=QuestOperationSuccessResponse, status_code=status.HTTP_200_OK, tags=["Data Management (Protected)"], dependencies=[Depends(get_api_key)])
 async def load_quests_from_file_api(payload: FilePathSchema):
     logger.info(f"Authenticated request to load quests from file: {payload.filepath}")
     try:
         quest_manager.load_quests(payload.filepath)
-        message = f"Quests successfully loaded from {payload.filepath}. Total: {len(quest_manager._quests)}."
+        message = f"Quests successfully loaded from {payload.filepath}. Total in manager: {len(quest_manager._quests)}."
         logger.info(message + " (Authenticated request)")
-        return {"message": message}
+        return QuestOperationSuccessResponse(message=message, quest_id="N/A") 
     except FileNotFoundError as e:
         logger.warning(f"File not found for loading quests (authenticated): {payload.filepath}. Error: {e}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Error loading quests: {str(e)}")
@@ -148,12 +234,12 @@ async def load_quests_from_file_api(payload: FilePathSchema):
     except Exception as e:
         logger.error(f"Unexpected error loading quests from {payload.filepath} (authenticated): {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An unexpected error occurred while loading quests: {str(e)}")
-
-@app.post("/testing/reset", tags=["Testing (Protected)"], include_in_schema=False, dependencies=[Depends(get_api_key)])
+    
+@app.post("/testing/reset", response_model=QuestOperationSuccessResponse, tags=["Testing (Protected)"], include_in_schema=False, dependencies=[Depends(get_api_key)])
 async def reset_state_testing_api():
-    global quest_manager
+    global quest_manager 
     quest_manager = QuestManager()
-    logger.info(f"QuestManager state has been reset for testing via authenticated API call.")
+    logger.info("QuestManager state has been reset for testing via authenticated API call.")
     try:
         if os.path.exists(DEFAULT_QUEST_FILE):
             logger.info(f"Attempting to load initial quests from {DEFAULT_QUEST_FILE} after reset (authenticated call)...")
@@ -162,7 +248,7 @@ async def reset_state_testing_api():
             logger.info(f"Default quest file {DEFAULT_QUEST_FILE} not found after reset (authenticated call). Manager is empty.")
     except Exception as e:
         logger.warning(f"Could not load initial quests from {DEFAULT_QUEST_FILE} after reset (authenticated call). Error: {e}", exc_info=True)
-    return {"message": "QuestManager state has been reset."}
+    return QuestOperationSuccessResponse(message="QuestManager state has been reset.", quest_id="N/A")
 
 @app.get("/quests/", response_model=List[QuestResponseSchema], tags=["Quests (Public)"])
 async def get_all_quests_public():
@@ -201,10 +287,10 @@ async def get_completion_order_public_api():
         order = quest_manager.get_completion_order()
         logger.info("Successfully retrieved completion order (public).")
         return CompletionOrderResponseSchema(order=order, message="Successfully retrieved completion order.")
-    except ValueError as e:
+    except ValueError as e: 
         logger.warning(f"Cannot get completion order (public), graph contains cycles: {e}")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except RuntimeError as e:
+    except RuntimeError as e: 
         logger.error(f"Runtime error getting completion order (public): {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 

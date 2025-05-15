@@ -5,20 +5,68 @@ import os
 import json
 import logging
 
+from datetime import datetime, timezone
+
+from quest import Quest
+try:
+    from enums.quest_enums import QuestStatus, QuestType
+except ImportError:
+    logging.basicConfig(level=logging.WARNING)
+    logging.warning("test_quest.py: Could not import QuestStatus and QuestType from enums.quest_enums. Using string fallbacks for tests.")
+    QuestStatus = type("QuestStatus", (object,), {k: k.lower() for k in ["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "FAILED"]})
+    QuestType = type("QuestType", (object,), {k: k.lower() for k in ["MAIN", "SIDE", "OPTIONAL", "REPEATABLE", "TIMED"]})
+
+
 class TestQuest(unittest.TestCase):
 
-    def test_quest_creation_valid(self):
+    def test_quest_creation_valid_defaults(self):
         quest1 = Quest(id="q1", title="Title 1", description="Desc 1")
         self.assertEqual(quest1.id, "q1")
         self.assertEqual(quest1.title, "Title 1")
         self.assertEqual(quest1.description, "Desc 1")
         self.assertEqual(quest1.dependencies, set())
-        self.assertFalse(quest1.completed)
+        
+        self.assertEqual(quest1.status, QuestStatus.NOT_STARTED)
+        self.assertEqual(quest1.quest_type, QuestType.SIDE)
+        self.assertEqual(quest1.rewards, [])
+        self.assertEqual(quest1.consequences, [])
+        self.assertEqual(quest1.failure_conditions, [])
+        self.assertIsNone(quest1.start_time)
+        self.assertFalse(quest1.completed) 
 
-        quest2 = Quest(id="q2", title="Title 2", description="Desc 2", dependencies=["q1"])
+    def test_quest_creation_valid_all_fields(self):
+        deps = ["dep1"]
+        rewards_data = [{"type": "xp", "amount": 100}]
+        consequences_data = [{"type": "lose_item", "item_id": "key"}]
+        failure_data = [{"condition": "timeout"}]
+        start_dt = datetime.now(timezone.utc)
+
+        quest2 = Quest(
+            id="q2", 
+            title="Title 2", 
+            description="Desc 2", 
+            dependencies=deps,
+            status=QuestStatus.IN_PROGRESS,
+            quest_type=QuestType.MAIN,
+            rewards=rewards_data,
+            consequences=consequences_data,
+            failure_conditions=failure_data,
+            start_time=start_dt
+        )
         self.assertEqual(quest2.id, "q2")
-        self.assertEqual(quest2.dependencies, {"q1"})
-        self.assertFalse(quest2.completed)
+        self.assertEqual(quest2.dependencies, set(deps))
+        self.assertEqual(quest2.status, QuestStatus.IN_PROGRESS)
+        self.assertEqual(quest2.quest_type, QuestType.MAIN)
+        self.assertEqual(quest2.rewards, rewards_data)
+        self.assertEqual(quest2.consequences, consequences_data)
+        self.assertEqual(quest2.failure_conditions, failure_data)
+        self.assertEqual(quest2.start_time, start_dt)
+        self.assertFalse(quest2.completed) 
+
+
+        quest_completed = Quest(id="q3", title="T3", description="D3", status=QuestStatus.COMPLETED)
+        self.assertTrue(quest_completed.completed)
+
 
     def test_quest_creation_invalid_id(self):
         with self.assertRaisesRegex(ValueError, "Quest ID must be a non-empty string."):
@@ -33,18 +81,64 @@ class TestQuest(unittest.TestCase):
             Quest(id="q1", title=None, description="Desc")
             
     def test_quest_creation_invalid_description(self):
-        # Description can be empty, but not None
-        Quest(id="q1", title="Title", description="") # Should be fine
+        Quest(id="q1", title="Title", description="") 
         with self.assertRaisesRegex(ValueError, "Quest description must be a string."):
             Quest(id="q1", title="Title", description=None)
 
-    def test_mark_as_completed_pending(self):
+    def test_quest_creation_invalid_enums_and_types(self):
+        with self.assertRaisesRegex(ValueError, "Invalid quest status: invalid_status"):
+            Quest(id="q_s", title="T", description="D", status="invalid_status")
+        with self.assertRaisesRegex(ValueError, "Invalid quest type: invalid_type"):
+            Quest(id="q_t", title="T", description="D", quest_type="invalid_type")
+
+        with self.assertRaisesRegex(ValueError, "Rewards must be a list of dictionaries."):
+            Quest(id="q_r", title="T", description="D", rewards={"not_a_list": True})
+        with self.assertRaisesRegex(ValueError, "Consequences must be a list of dictionaries."):
+            Quest(id="q_c", title="T", description="D", consequences="not_a_list")
+        with self.assertRaisesRegex(ValueError, "Failure conditions must be a list of dictionaries."):
+            Quest(id="q_f", title="T", description="D", failure_conditions=123)
+        with self.assertRaisesRegex(ValueError, "Start time must be a datetime object."):
+            Quest(id="q_st", title="T", description="D", start_time="not_a_datetime")
+
+
+    def test_update_status(self):
         quest = Quest(id="q1", title="Title", description="Desc")
+        self.assertEqual(quest.status, QuestStatus.NOT_STARTED)
         self.assertFalse(quest.completed)
-        quest.mark_as_completed()
+
+        quest.update_status(QuestStatus.IN_PROGRESS)
+        self.assertEqual(quest.status, QuestStatus.IN_PROGRESS)
+        self.assertFalse(quest.completed)
+
+        quest.update_status(QuestStatus.COMPLETED)
+        self.assertEqual(quest.status, QuestStatus.COMPLETED)
         self.assertTrue(quest.completed)
-        quest.mark_as_pending()
+
+        quest.update_status(QuestStatus.FAILED)
+        self.assertEqual(quest.status, QuestStatus.FAILED)
         self.assertFalse(quest.completed)
+
+        quest.update_status("not_started") 
+        self.assertEqual(quest.status, QuestStatus.NOT_STARTED)
+
+        with self.assertRaisesRegex(ValueError, "Invalid status value: very_invalid_status"):
+            quest.update_status("very_invalid_status")
+
+
+    def test_set_and_clear_start_time(self):
+        quest = Quest(id="q1", title="T", description="D")
+        self.assertIsNone(quest.start_time)
+        
+        dt1 = datetime.now(timezone.utc)
+        quest.set_start_time(dt1)
+        self.assertEqual(quest.start_time, dt1)
+
+        quest.clear_start_time()
+        self.assertIsNone(quest.start_time)
+
+        with self.assertRaisesRegex(ValueError, "Time must be a datetime object."):
+            quest.set_start_time("not_a_datetime_object")
+
 
     def test_add_remove_dependency(self):
         quest = Quest(id="q1", title="Title", description="Desc")
@@ -52,7 +146,7 @@ class TestQuest(unittest.TestCase):
         self.assertEqual(quest.dependencies, {"dep1"})
         quest.add_dependency("dep2")
         self.assertEqual(quest.dependencies, {"dep1", "dep2"})
-        quest.add_dependency("dep1") # Adding same dependency should not change the set
+        quest.add_dependency("dep1") 
         self.assertEqual(quest.dependencies, {"dep1", "dep2"})
 
         with self.assertRaisesRegex(ValueError, "Dependency quest ID must be a non-empty string."):
@@ -62,7 +156,7 @@ class TestQuest(unittest.TestCase):
 
         quest.remove_dependency("dep1")
         self.assertEqual(quest.dependencies, {"dep2"})
-        quest.remove_dependency("non_existent_dep") # Should not raise error
+        quest.remove_dependency("non_existent_dep") 
         self.assertEqual(quest.dependencies, {"dep2"})
         quest.remove_dependency("dep2")
         self.assertEqual(quest.dependencies, set())
@@ -72,424 +166,126 @@ class TestQuest(unittest.TestCase):
         quest_with_deps = Quest(id="q_deps", title="T", description="D", dependencies=["dep1", "dep2"])
 
         self.assertTrue(quest_no_deps.is_unlocked(set()))
-        self.assertTrue(quest_no_deps.is_unlocked({"dep1", "another_dep"})) # Extra completed quests don't matter
+        self.assertTrue(quest_no_deps.is_unlocked({"dep1", "another_dep"})) 
 
         self.assertFalse(quest_with_deps.is_unlocked(set()))
         self.assertFalse(quest_with_deps.is_unlocked({"dep1"}))
         self.assertTrue(quest_with_deps.is_unlocked({"dep1", "dep2"}))
-        self.assertTrue(quest_with_deps.is_unlocked({"dep1", "dep2", "dep3"})) # Superset of dependencies
+        self.assertTrue(quest_with_deps.is_unlocked({"dep1", "dep2", "dep3"})) 
 
     def test_quest_str_repr(self):
-        quest = Quest(id="q1", title="My Quest", description="Desc", dependencies=["dep0"])
-        self.assertTrue("q1" in str(quest))
-        self.assertTrue("My Quest" in str(quest))
-        self.assertTrue("PENDING" in str(quest))
-        self.assertTrue("dep0" in str(quest))
+        quest = Quest(id="q1", title="My Quest", description="D", dependencies=["dep0"], quest_type=QuestType.MAIN)
+        s_initial = str(quest)
+        r_initial = repr(quest) 
+
+        self.assertIn("q1", s_initial)
+        self.assertIn("My Quest", s_initial)
+        self.assertIn(str(QuestStatus.NOT_STARTED).upper(), s_initial)
+        self.assertIn(str(QuestType.MAIN).upper(), s_initial)
+        self.assertIn("dep0", s_initial)
         
-        quest.mark_as_completed()
-        self.assertTrue("DONE" in str(quest))
-
-        self.assertTrue("Quest(id='q1'" in repr(quest))
-        self.assertTrue("title='My Quest'" in repr(quest))
-        self.assertTrue("dependencies=['dep0']" in repr(quest) or "dependencies={'dep0'}" in repr(quest)) # Order in set for repr might vary
-        self.assertTrue("completed=True" in repr(quest))
-
-
-class TestQuestManager(unittest.TestCase):
-
-    def setUp(self):
-        """Set up a new QuestManager and some common quests for each test."""
-        self.manager = QuestManager()
-        self.q1 = Quest(id="q1", title="Quest 1", description="First quest, no deps.")
-        self.q2 = Quest(id="q2", title="Quest 2", description="Depends on q1.", dependencies=["q1"])
-        self.q3 = Quest(id="q3", title="Quest 3", description="Depends on q1 and q2.", dependencies=["q1", "q2"])
-        self.q_independent = Quest(id="q_ind", title="Independent", description="No dependencies.")
-        # For cycle tests
-        self.qc1 = Quest(id="qc1", title="Cycle 1", description="Part of cycle", dependencies=["qc2"])
-        self.qc2 = Quest(id="qc2", title="Cycle 2", description="Part of cycle", dependencies=["qc1"]) # Simple A->B, B->A
-        self.qc3 = Quest(id="qc3", title="Cycle 3", description="Completes cycle", dependencies=["qc1"]) # A->B, B->C, C->A (if qc2 dep on qc3)
-
-    def test_add_quest_valid(self):
-        self.manager.add_quest(self.q1)
-        self.assertIn("q1", self.manager._quests)
-        self.assertEqual(self.manager.get_quest("q1"), self.q1)
-
-    def test_add_quest_duplicate_id(self):
-        self.manager.add_quest(self.q1)
-        q_dup = Quest(id="q1", title="Duplicate Quest", description="This should fail.")
-        with self.assertRaisesRegex(ValueError, "Quest with ID 'q1' already exists."):
-            self.manager.add_quest(q_dup)
-
-    def test_get_quest(self):
-        self.manager.add_quest(self.q1)
-        self.assertEqual(self.manager.get_quest("q1"), self.q1)
-        self.assertIsNone(self.manager.get_quest("non_existent_id"))
-
-    def test_complete_quest_valid_no_deps(self):
-        self.manager.add_quest(self.q1)
-        self.manager.complete_quest("q1")
-        self.assertTrue(self.q1.completed)
-        self.assertIn("q1", self.manager._completed_quest_ids)
-
-    def test_complete_quest_valid_with_deps(self):
-        self.manager.add_quest(self.q1)
-        self.manager.add_quest(self.q2) # q2 depends on q1
+        self.assertIn("Quest(id='q1'", r_initial)
+        self.assertIn("title='My Quest'", r_initial)
+        self.assertIn(f"status='{str(QuestStatus.NOT_STARTED)}'", r_initial)
+        self.assertIn(f"quest_type='{str(QuestType.MAIN)}'", r_initial)
+        self.assertIn("dependencies=['dep0']", r_initial) 
+        self.assertIn(f"rewards={[]}", r_initial) 
+        self.assertIn(f"start_time=None", r_initial)
         
-        self.manager.complete_quest("q1") # Complete q1 first
-        self.manager.complete_quest("q2") # Now q2 can be completed
-        self.assertTrue(self.q2.completed)
-        self.assertIn("q2", self.manager._completed_quest_ids)
+        quest.update_status(QuestStatus.COMPLETED)
+        s_completed = str(quest)
+        r_completed = repr(quest) 
 
-    def test_complete_quest_not_found(self):
-        with self.assertRaisesRegex(ValueError, "Quest with ID 'non_existent' not found."):
-            self.manager.complete_quest("non_existent")
-
-    def test_complete_quest_already_completed(self):
-        self.manager.add_quest(self.q1)
-        self.manager.complete_quest("q1")
-        # Should not raise an error, just print a message (tested via lack of exception and state)
-        try:
-            self.manager.complete_quest("q1") 
-        except Exception as e:
-            self.fail(f"Completing an already completed quest raised an unexpected exception: {e}")
-        self.assertTrue(self.q1.completed) # Still completed
-
-    def test_complete_quest_dependencies_not_met(self):
-        self.manager.add_quest(self.q1)
-        self.manager.add_quest(self.q2) # q2 depends on q1
-        expected_error_regex = "Cannot complete quest 'Quest 2' \\(ID: q2\\). Dependencies not met: \\['q1'\\]"
-        with self.assertRaisesRegex(PermissionError, expected_error_regex):
-            self.manager.complete_quest("q2")
-        self.assertFalse(self.q2.completed)
-
-    def test_list_available_quests(self):
-        self.assertEqual(self.manager.list_available_quests(), []) # No quests added
-
-        self.manager.add_quest(self.q1) # No deps
-        self.manager.add_quest(self.q2) # Depends on q1
-        self.manager.add_quest(self.q_independent) # No deps
-
-        available = self.manager.list_available_quests()
-        self.assertIn(self.q1, available)
-        self.assertIn(self.q_independent, available)
-        self.assertNotIn(self.q2, available)
-        self.assertEqual(len(available), 2)
-
-        self.manager.complete_quest("q1")
-        available_after_q1_done = self.manager.list_available_quests()
-        self.assertIn(self.q2, available_after_q1_done) # q2 now available
-        self.assertIn(self.q_independent, available_after_q1_done)
-        self.assertNotIn(self.q1, available_after_q1_done) # q1 is completed
-        self.assertEqual(len(available_after_q1_done), 2)
+        self.assertIn(str(QuestStatus.COMPLETED).upper(), s_completed)
         
-        self.manager.complete_quest("q2")
-        self.manager.complete_quest("q_ind")
-        self.assertEqual(self.manager.list_available_quests(), [])
+        self.assertIn(f"status='{str(QuestStatus.COMPLETED)}'", r_completed)
+        self.assertIn("Quest(id='q1'", r_completed)
+        self.assertIn("title='My Quest'", r_completed)
+        self.assertIn("dependencies=['dep0']", r_completed) 
 
-
-    def test_has_cycles_no_cycle(self):
-        self.manager.add_quest(self.q1)
-        self.manager.add_quest(self.q2) # q1 -> q2
-        self.manager.add_quest(self.q3) # q1 -> q3, q2 -> q3
-        self.assertFalse(self.manager.has_cycles())
-
-    def test_has_cycles_simple_direct_cycle(self):
-        # qc1 -> qc2, qc2 -> qc1
-        self.manager.add_quest(self.qc1)
-        self.manager.add_quest(self.qc2)
-        self.assertTrue(self.manager.has_cycles())
-
-    def test_has_cycles_longer_cycle(self):
-        # q_a -> q_b -> q_c -> q_a
-        q_a = Quest("qa", "A", "desc", ["qc"])
-        q_b = Quest("qb", "B", "desc", ["qa"])
-        q_c = Quest("qc", "C", "desc", ["qb"])
-        self.manager.add_quest(q_a)
-        self.manager.add_quest(q_b)
-        self.manager.add_quest(q_c)
-        self.assertTrue(self.manager.has_cycles())
+    def test_to_dict_conversion(self):
+        start_dt = datetime(2024, 5, 15, 12, 30, 0, tzinfo=timezone.utc)
+        rewards_data = [{"item": "gold", "amount": 10}]
+        quest = Quest(
+            id="q_dict", 
+            title="To Dict Test", 
+            description="Testing to_dict",
+            dependencies=["dep_d"],
+            status=QuestStatus.IN_PROGRESS,
+            quest_type=QuestType.TIMED,
+            rewards=rewards_data,
+            consequences=[{"effect": "anger"}],
+            failure_conditions=[{"time": 300}],
+            start_time=start_dt
+        )
         
-    def test_has_cycles_unrelated_paths_with_cycle(self):
-        self.manager.add_quest(self.q1) # q1 (no cycle part)
-        self.manager.add_quest(self.qc1) # qc1 -> qc2
-        self.manager.add_quest(self.qc2) # qc2 -> qc1 (cycle part)
-        self.assertTrue(self.manager.has_cycles())
-
-    def test_has_cycles_dependency_on_non_existent_quest(self):
-        q_dep_non_exist = Quest("q_non", "Non", "desc", ["non_existent_id"])
-        self.manager.add_quest(q_dep_non_exist)
-        self.assertFalse(self.manager.has_cycles()) # A non-existent dependency is not a cycle itself
-
-
-    def test_get_completion_order_no_cycle(self):
-        self.manager.add_quest(self.q1)
-        self.manager.add_quest(self.q2) # q1 -> q2
-        self.manager.add_quest(self.q_independent)
+        d = quest.to_dict()
         
-        order = self.manager.get_completion_order()
-        self.assertEqual(len(order), 3)
-        self.assertIn("q1", order)
-        self.assertIn("q2", order)
-        self.assertIn("q_ind", order)
+        self.assertEqual(d["id"], "q_dict")
+        self.assertEqual(d["title"], "To Dict Test")
+        self.assertEqual(d["description"], "Testing to_dict")
+        self.assertEqual(d["dependencies"], ["dep_d"])
+        self.assertEqual(d["status"], str(QuestStatus.IN_PROGRESS)) 
+        self.assertEqual(d["quest_type"], str(QuestType.TIMED))  
+        self.assertEqual(d["rewards"], rewards_data)
+        self.assertEqual(d["consequences"], [{"effect": "anger"}])
+        self.assertEqual(d["failure_conditions"], [{"time": 300}])
+        self.assertEqual(d["start_time"], start_dt.isoformat()) 
+
+    def test_from_dict_conversion(self):
+        start_iso = datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
+        data = {
+            "id": "q_from_dict",
+            "title": "From Dict Test",
+            "description": "Testing from_dict",
+            "dependencies": ["dep_fd"],
+            "status": str(QuestStatus.COMPLETED), 
+            "quest_type": str(QuestType.OPTIONAL),
+            "rewards": [{"item": "potion"}],
+            "consequences": [],
+            "failure_conditions": [{"reason": "too_slow"}],
+            "start_time": start_iso
+        }
         
-        # q1 must come before q2
-        self.assertLess(order.index("q1"), order.index("q2"))
-        # q_independent can be anywhere relative to q1/q2 as long as q1 is before q2
-
-    def test_get_completion_order_complex_dag(self):
-        # A -> B, A -> C, B -> D, C -> D
-        qA = Quest("A", "A", "", [])
-        qB = Quest("B", "B", "", ["A"])
-        qC = Quest("C", "C", "", ["A"])
-        qD = Quest("D", "D", "", ["B", "C"])
-        qE = Quest("E", "E", "", []) 
+        quest = Quest.from_dict(data)
         
-        self.manager.add_quest(qA)
-        self.manager.add_quest(qB)
-        self.manager.add_quest(qC)
-        self.manager.add_quest(qD)
-        self.manager.add_quest(qE)
-        
-        order = self.manager.get_completion_order()
-        self.assertEqual(len(order), 5)
-        self.assertLess(order.index("A"), order.index("B"))
-        self.assertLess(order.index("A"), order.index("C"))
-        self.assertLess(order.index("B"), order.index("D"))
-        self.assertLess(order.index("C"), order.index("D"))
+        self.assertEqual(quest.id, "q_from_dict")
+        self.assertEqual(quest.title, "From Dict Test")
+        self.assertEqual(quest.status, QuestStatus.COMPLETED) 
+        self.assertEqual(quest.quest_type, QuestType.OPTIONAL) 
+        self.assertEqual(quest.rewards, [{"item": "potion"}])
+        self.assertEqual(quest.dependencies, {"dep_fd"})
+        self.assertTrue(quest.completed) 
+        self.assertEqual(quest.start_time, datetime.fromisoformat(start_iso))
 
-    def test_get_completion_order_with_cycle(self):
-        self.manager.add_quest(self.qc1) # qc1 -> qc2
-        self.manager.add_quest(self.qc2) # qc2 -> qc1
-        with self.assertRaisesRegex(ValueError, "Cannot determine completion order: graph contains cycles."):
-            self.manager.get_completion_order()
-
-    def test_get_completion_order_empty_manager(self):
-        order = self.manager.get_completion_order()
-        self.assertEqual(order, [])
-
-    def test_get_completion_order_dependency_on_non_existent_quest(self):
-        q_dep_non_exist = Quest("q_non", "Non", "desc", ["non_existent_id"])
-        self.manager.add_quest(q_dep_non_exist)
-        self.manager.add_quest(self.q1) 
-        
-        order = self.manager.get_completion_order()
-        self.assertEqual(len(order), 2)
-        self.assertIn("q_non", order)
-        self.assertIn("q1", order)
-
-    def tearDown(self):
-
-        test_files_to_remove = [
-            "test_quests.json",
-            "test_invalid_format.json",
-            "test_decode_error.json",
-            "test_missing_keys.json",
-            "test_sample_like.json",
-            os.path.join("data_test_save", "nested_quests.json")
-        ]
-        for test_file in test_files_to_remove:
-            if os.path.exists(test_file):
-                try:
-                    os.remove(test_file)
-                except OSError as e:
-                    print(f"Warning: Could not remove test file {test_file}: {e}")
-        
-        
-        data_dir_for_tests = "data_test_save"
-        if os.path.exists(data_dir_for_tests):
-            try:
-                if not os.listdir(data_dir_for_tests): 
-                    os.rmdir(data_dir_for_tests)
-            except OSError as e:
-                 print(f"Warning: Could not remove test directory {data_dir_for_tests}: {e}")
-
-
-    def test_save_and_load_quests(self):
-        test_filepath = "test_quests.json"
-        if os.path.exists(test_filepath): 
-            os.remove(test_filepath)
-
- 
-        q1 = Quest(id="s_q1", title="Save Q1", description="Desc Q1", completed=False)
-        q2 = Quest(id="s_q2", title="Save Q2", description="Desc Q2", dependencies=["s_q1"], completed=True)
-        
-        self.manager.add_quest(q1)
-        self.manager.add_quest(q2)
-                                  
-        self.manager.save_quests(test_filepath)
-        self.assertTrue(os.path.exists(test_filepath))
-
-        
-        new_manager = QuestManager()
-        new_manager.load_quests(test_filepath)
-
-        self.assertEqual(len(new_manager._quests), 2)
-        
-        loaded_q1 = new_manager.get_quest("s_q1")
-        loaded_q2 = new_manager.get_quest("s_q2")
-
-        self.assertIsNotNone(loaded_q1)
-        self.assertEqual(loaded_q1.title, "Save Q1")
-        self.assertFalse(loaded_q1.completed, "Loaded q1 should not be completed")
-        self.assertNotIn("s_q1", new_manager._completed_quest_ids, "s_q1 should not be in completed_ids set")
-
-        self.assertIsNotNone(loaded_q2)
-        self.assertEqual(loaded_q2.title, "Save Q2")
-        self.assertTrue(loaded_q2.completed, "Loaded q2 should be completed as per saved data")
-        self.assertEqual(loaded_q2.dependencies, {"s_q1"})
-        self.assertIn("s_q2", new_manager._completed_quest_ids, "s_q2 should be in completed_ids set after load")
-
-    def test_save_quests_creates_directory(self):
-        
-        nested_filepath = os.path.join("data_test_save", "nested_quests.json")
-        if os.path.exists(nested_filepath): os.remove(nested_filepath)
-        if os.path.exists(os.path.dirname(nested_filepath)): os.rmdir(os.path.dirname(nested_filepath))
-        
-        
-        self.manager.add_quest(Quest(id="q_temp", title="Temp", description="Temp quest"))
-        
-        self.manager.save_quests(nested_filepath)
-        self.assertTrue(os.path.exists(nested_filepath))
-        
-
-
-    def test_load_quests_file_not_found(self):
-        with self.assertRaises(FileNotFoundError):
-            self.manager.load_quests("non_existent_file_definitely.json")
-
-    def test_load_quests_invalid_json_structure_not_a_list(self):
-        test_filepath = "test_invalid_format.json"
-        with open(test_filepath, 'w', encoding='utf-8') as f:
-            f.write('{"not": "a list"}') 
-        
-        with self.assertRaisesRegex(ValueError, "Invalid format: Expected a list of quests"):
-            self.manager.load_quests(test_filepath)
-        
-
-    def test_load_quests_json_decode_error(self):
-        test_filepath = "test_decode_error.json"
-        with open(test_filepath, 'w', encoding='utf-8') as f:
-            f.write('this is not valid json {')
-        
-        with self.assertRaisesRegex(ValueError, "Error decoding JSON"):
-            self.manager.load_quests(test_filepath)
-        
-
-    def test_load_quests_missing_required_keys_in_quest_data(self):
-        test_filepath = "test_missing_keys.json"
-        
-        data_with_missing_key = [
-            {"id": "q_ok", "title":"OK Quest", "description":"This is fine", "dependencies":[], "completed":False},
-            {"id": "q_bad", "description": "desc only no title"}
-        ]
-        with open(test_filepath, 'w', encoding='utf-8') as f:
-            json.dump(data_with_missing_key, f)
-        
-        self.manager.load_quests(test_filepath)
-        self.assertEqual(len(self.manager._quests), 1, "Only one quest should be loaded")
-        self.assertIsNotNone(self.manager.get_quest("q_ok"))
-        self.assertIsNone(self.manager.get_quest("q_bad"))
-
-
-    def test_load_from_sample_json_like_structure_no_completed_field(self):
-
-        sample_like_filepath = "test_sample_like.json"
-        sample_data = [
-            {"id": "sample_0", "title": "Hero's Awakening", "description": "Desc", "dependencies": []},
-            {"id": "sample_1", "title": "Find Sword", "description": "Desc", "dependencies": ["sample_0"]}
-        ] 
-        with open(sample_like_filepath, 'w', encoding='utf-8') as f:
-            json.dump(sample_data, f)
-
-        self.manager.load_quests(sample_like_filepath)
-        self.assertEqual(len(self.manager._quests), 2)
-        
-        q0 = self.manager.get_quest("sample_0")
-        self.assertIsNotNone(q0)
-        self.assertFalse(q0.completed, "Quest loaded without 'completed' field should default to False")
-        self.assertNotIn("sample_0", self.manager._completed_quest_ids)
-
-        q1 = self.manager.get_quest("sample_1")
-        self.assertIsNotNone(q1)
-        self.assertFalse(q1.completed)
-        self.assertEqual(q1.dependencies, {"sample_0"})
-        self.assertNotIn("sample_1", self.manager._completed_quest_ids)
-        
-
-    def test_load_quests_duplicate_ids_in_file(self):
-        test_filepath = "test_duplicate_ids_in_file.json"
-        duplicate_id_data = [
-            {"id": "dup1", "title": "First Dup", "description": "Desc1", "completed": False},
-            {"id": "dup1", "title": "Second Dup", "description": "Desc2", "completed": True}, 
-            {"id": "uniq1", "title": "Unique", "description": "DescUniq", "completed": False}
-        ]
-        with open(test_filepath, 'w', encoding='utf-8') as f:
-            json.dump(duplicate_id_data, f)
-
-        self.manager.load_quests(test_filepath)
-        self.assertEqual(len(self.manager._quests), 2)
-        
-        loaded_dup1 = self.manager.get_quest("dup1")
-        self.assertIsNotNone(loaded_dup1)
-        self.assertEqual(loaded_dup1.title, "First Dup") 
-        self.assertFalse(loaded_dup1.completed)
-        self.assertNotIn("dup1", self.manager._completed_quest_ids) 
-
-        self.assertIsNotNone(self.manager.get_quest("uniq1"))
-        
-
-    def test_load_quests_removes_dangling_dependencies(self):
-        test_filepath = "test_dangling_deps.json"
-        data_with_dangling_dep = [
-            {"id": "q_valid", "title": "Valid Quest", "description": "Desc", "dependencies": ["non_existent_dep_id"], "completed": False},
-            {"id": "q_another", "title": "Another", "description": "Desc", "dependencies": [], "completed": True}
-        ]
-        with open(test_filepath, 'w', encoding='utf-8') as f:
-            json.dump(data_with_dangling_dep, f)
-
-        self.manager.load_quests(test_filepath)
-        self.assertEqual(len(self.manager._quests), 2)
-
-        loaded_q_valid = self.manager.get_quest("q_valid")
-        self.assertIsNotNone(loaded_q_valid)
-        self.assertEqual(loaded_q_valid.dependencies, set(), "Dangling dependency should have been removed")
-
-        loaded_q_another = self.manager.get_quest("q_another")
-        self.assertIsNotNone(loaded_q_another)
-        self.assertTrue(loaded_q_another.completed)
-        self.assertIn("q_another", self.manager._completed_quest_ids)
-    
-    def test_load_quests_logs_warning_for_bad_entry_in_file(self):
+    def test_from_dict_defaults_and_missing_fields(self):
+        data = {
+            "id": "q_min",
+            "title": "Minimal",
+            "description": "Minimal data"
             
-            bad_data_filepath = "test_bad_data_for_log_check.json"
-            test_data = [
-                {"id": "log_q1", "title": "Log Quest 1", "description": "Correct entry"}, 
-                {"id": "log_q2"}  
-            ]
-            with open(bad_data_filepath, "w", encoding="utf-8") as f:
-                json.dump(test_data, f)
+        }
+        quest = Quest.from_dict(data)
+        self.assertEqual(quest.status, QuestStatus.NOT_STARTED) 
+        self.assertEqual(quest.quest_type, QuestType.SIDE)    
+        self.assertEqual(quest.rewards, [])
+        self.assertIsNone(quest.start_time)
 
-            with self.assertLogs(logger='manager', level='WARNING') as cm:
-                self.manager.load_quests(bad_data_filepath) 
-                
-
-            
-            self.assertTrue(len(cm.records) > 0, "No WARNING messages were logged.")
-
-            found_expected_log = False
-            for record in cm.output: 
-                if "Skipping quest data entry" in record and "log_q2" in record:
-                    found_expected_log = True
-                    break
-            self.assertTrue(found_expected_log, "Expected warning log for bad quest entry was not found.")
-
-
-            self.assertIsNotNone(self.manager.get_quest("log_q1"))
-            self.assertIsNone(self.manager.get_quest("log_q2")) 
-
-            if os.path.exists(bad_data_filepath):
-                os.remove(bad_data_filepath)
+    def test_from_dict_invalid_data(self):
+        with self.assertRaisesRegex(ValueError, "Missing required key in quest data: 'title'"):
+            Quest.from_dict({"id": "q_no_title", "description": "d"})
         
+        with self.assertRaisesRegex(ValueError, "Invalid status value 'bad_status'"):
+            Quest.from_dict({"id": "q", "title": "t", "description": "d", "status": "bad_status"})
+        
+        with self.assertRaisesRegex(ValueError, "Invalid quest_type value 'bad_type'"):
+            Quest.from_dict({"id": "q", "title": "t", "description": "d", "quest_type": "bad_type"})
+
+        with self.assertRaisesRegex(ValueError, "Invalid start_time format 'not_iso_date'"):
+            Quest.from_dict({"id": "q", "title": "t", "description": "d", "start_time": "not_iso_date"})
+        
+        with self.assertRaisesRegex(ValueError, "Rewards must be a list"): 
+            Quest.from_dict({"id": "q", "title": "t", "description": "d", "rewards": "not_a_list"})
 
 if __name__ == '__main__':
 

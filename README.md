@@ -1,60 +1,68 @@
-# Quest Dependency Manager
+# 🧭 Quest Dependency Manager
 
-A console-based quest dependency management system written in Python. This application allows users to define quests, specify dependencies between them, check for valid quest progression by preventing the start of quests whose prerequisites are not met, detect cyclical dependencies, and determine a valid topological order for quest completion. It also supports saving and loading quest data via JSON files. An HTTP API is provided for programmatic interaction, with sensitive operations protected by API key authentication.
+A Python-based system for managing tasks (or **"quests"**) with complex dependencies and lifecycles. Designed with flexibility and clarity in mind, this tool supports everything from RPG questlines to workflow automation.
 
-## Overview
+---
 
-The Quest Dependency Manager provides a robust way to model and manage complex task sequences or storylines, ensuring logical progression and preventing common issues like cyclic dependencies. It's an ideal tool for game developers, project managers, educators, or anyone needing to manage a set of tasks with interdependencies. The system can be interacted with via a simple command-line interface for local management and a RESTful HTTP API for integration with other applications.
+## 🚀 Overview
 
-## Potential Applications
+The **Quest Dependency Manager** enables you to define, track, and progress through quests with attributes like:
 
-The Quest Dependency Manager, with its current and planned features, can be a valuable tool in various domains:
+- Type (`MAIN`, `SIDE`, `REPEATABLE`, `TIMED`)
+- Status (`NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`)
+- Dependencies & prerequisites
+- Rewards, consequences, failure conditions
 
-* **Game Development**:
-    * **Core Use**: Designing and managing complex, branching questlines and storylines in RPGs, adventure games, and other genres.
-    * **Future Potential**: Implementing quests with multiple outcomes (rewards/consequences), different types (main, side, repeatable), time limits, or failure conditions. Could also be used to manage achievement systems or tutorial progressions.
+Supports **cycle detection**, **topological sorting**, **data persistence**, and offers:
 
-* **Project Management**:
-    * **Core Use**: Breaking down large projects into smaller, manageable tasks with clear dependencies. Visualizing task order and identifying critical paths.
-    * **Future Potential**: Integrating with project management tools via API, supporting task assignments, effort estimation (as new quest attributes), and generating progress reports. "OR" dependencies could model alternative paths to achieve a milestone.
+- 🖥️ Command-Line Interface (CLI)
+- 🌐 FastAPI-powered HTTP API with authentication
 
-* **Educational Platforms & E-Learning**:
-    * **Core Use**: Structuring courses where access to subsequent modules, lessons, or quizzes is unlocked upon completion of prerequisites.
-    * **Future Potential**: Creating personalized learning paths based on student performance (e.g., unlocking remedial or advanced modules). Quest "rewards" could be certificates or badges.
+---
 
-* **Workflow Automation & Business Process Management (BPM)**:
-    * **Core Use**: Modeling and executing defined workflows where steps have clear dependencies.
-    * **Future Potential**: With webhook/event systems, it could trigger external actions upon task completion. More detailed quest statuses (`in_progress`, `failed`) would enhance process tracking. Incompatible quests could model mutually exclusive process branches.
+## 🧠 Use Cases
 
-* **Simulations and Interactive Storytelling**:
-    * **Core Use**: Driving narrative progression in interactive stories or simulations where player actions (completing "quests") unlock new story branches or game states.
-    * **Future Potential**: More complex branching logic based on various quest outcomes and player choices.
+| Domain               | Use Example                                                                 |
+|----------------------|------------------------------------------------------------------------------|
+| 🎮 Game Development  | Manage complex questlines with branching paths, time limits, and rewards.     |
+| 🗂️ Project Management | Break down tasks into dependencies, enforce progression, track status.        |
+| 📚 E-learning         | Unlock lessons/modules based on prerequisites.                              |
+| ⚙️ Workflow Automation | Model business processes and execute dependent steps reliably.               |
+| 📖 Storytelling       | Drive narrative progression via quest outcomes.                              |
+| 🧑‍💼 Personal Planning | Track progress on personal goals or learning paths using a dependency system. |
 
-* **Personal Task Management & Goal Setting**:
-    * **Core Use**: Organizing complex personal goals into a series of dependent steps.
-    * **Future Potential**: With enhanced attributes like due dates (via time-limited quests) or priority levels (via quest types), it could serve as a sophisticated personal planner.
+---
 
-The system's flexibility, particularly with the planned API enhancements (filtering, PATCH updates) and advanced dependency types, will further broaden its applicability.
+## ✨ Features
 
-## Features
+### ✅ Quest Model
+- Unique ID, title, description
+- Dependencies on other quests
+- Types: `MAIN`, `SIDE`, `OPTIONAL`, `REPEATABLE`, `TIMED`
+- Status: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`
+- Rewards, consequences, failure conditions
+- Timed quest tracking (`start_time`)
 
-* **Quest Representation:** Define quests with unique IDs, titles, descriptions, and a list of prerequisite quest IDs.
-* **Dependency Management:**
-    * Add new quests with optional dependencies.
-    * Mark quests as completed.
-    * Enforce prerequisites strictly: quests cannot be completed unless all dependencies are fulfilled.
-* **Graph Analysis:**
-    * Detect cycles in the quest graph.
-    * Provide valid completion order via topological sorting.
-* **Data Persistence:**
-    * Save/load quest state in JSON format.
-* **Interfaces:**
-    * **Command-Line Interface (CLI):** Local quest management and debugging.
-    * **HTTP API (FastAPI):** RESTful interface with API key protection for write operations.
-* **Logging:** Unified logging for CLI and API.
-* **Testing:** Core and API logic tested via `unittest`.
+### 🔄 Lifecycle Management
+- Add, start, complete, fail, or reset quests
+- Prerequisite enforcement: no skipping allowed!
+- Repeatable quest handling
 
-## Requirements
+### 🧩 Dependency Graph
+- Automatic cycle detection
+- Generate valid quest completion order (topological sort)
+
+### 💾 Persistence
+- Save/load quests in structured JSON format
+
+### 🧰 Interfaces
+- **CLI**: Interactively manage quests locally
+- **FastAPI API**: Programmatic access with API key protection
+- Unified logging and automated tests included
+
+---
+
+## 📦 Requirements
 
 * Python 3.10+
 * Install dependencies:
