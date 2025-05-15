@@ -3,6 +3,7 @@ from quest import Quest
 from manager import QuestManager
 import os
 import json
+import logging
 
 class TestQuest(unittest.TestCase):
 
@@ -457,6 +458,37 @@ class TestQuestManager(unittest.TestCase):
         self.assertIsNotNone(loaded_q_another)
         self.assertTrue(loaded_q_another.completed)
         self.assertIn("q_another", self.manager._completed_quest_ids)
+    
+    def test_load_quests_logs_warning_for_bad_entry_in_file(self):
+            
+            bad_data_filepath = "test_bad_data_for_log_check.json"
+            test_data = [
+                {"id": "log_q1", "title": "Log Quest 1", "description": "Correct entry"}, 
+                {"id": "log_q2"}  
+            ]
+            with open(bad_data_filepath, "w", encoding="utf-8") as f:
+                json.dump(test_data, f)
+
+            with self.assertLogs(logger='manager', level='WARNING') as cm:
+                self.manager.load_quests(bad_data_filepath) 
+                
+
+            
+            self.assertTrue(len(cm.records) > 0, "No WARNING messages were logged.")
+
+            found_expected_log = False
+            for record in cm.output: 
+                if "Skipping quest data entry" in record and "log_q2" in record:
+                    found_expected_log = True
+                    break
+            self.assertTrue(found_expected_log, "Expected warning log for bad quest entry was not found.")
+
+
+            self.assertIsNotNone(self.manager.get_quest("log_q1"))
+            self.assertIsNone(self.manager.get_quest("log_q2")) 
+
+            if os.path.exists(bad_data_filepath):
+                os.remove(bad_data_filepath)
         
 
 if __name__ == '__main__':
