@@ -1,5 +1,16 @@
 📄 Specification — Quest Dependency Manager
 
+**Purpose & Use Cases**
+
+The Quest Dependency Manager is a Python-based system designed for creating, managing, and tracking tasks (or "quests") and their interdependencies. It ensures logical progression by preventing tasks from starting before their prerequisites are met, detects cyclical dependencies, and can determine an optimal completion order.
+
+This system is versatile and can be applied in various domains, including:
+* **Game Development**: Managing complex questlines and storylines in video games, especially RPGs.
+* **Project Management**: Breaking down projects into dependent tasks, tracking progress, and identifying critical paths.
+* **Educational Platforms**: Structuring learning modules where access to new content depends on completing prior lessons.
+* **Workflow Management**: Modeling and automating business processes with sequential and conditional steps.
+* **General Task Planning**: Organizing any set of tasks where order and prerequisites are crucial.
+
 Project Overview
 
 This project implements a console-based and API-driven quest dependency system using Python. It allows users to define quests, specify dependencies between them, check for valid quest progression, detect cycles, and determine a topological order of quest completion. The system supports both interactive command-line usage and RESTful API interaction via FastAPI.
@@ -112,5 +123,43 @@ json module (data serialization)
 
 fastapi, uvicorn, httpx (API functionality and testing)
 
+💡 Potential Enhancements & Future Features
+
+This section outlines potential improvements and new features that could be added to the Quest Dependency Manager.
+(✔️ = Partially implemented or good foundation exists; ➡️ = To be developed)
+
+1.  **Core Logic & Data Model:**
+    * ✔️ **Stricter Validation**: Good validation exists in `Quest.from_dict` and `QuestManager.add_quest`; can be expanded (e.g., ID formats, self-dependencies more explicitly).
+    * ➡️ **Expanded Quest Attributes**:
+        * ➡️ Rewards/Consequences: Define outcomes for quest completion or failure.
+        * ➡️ Quest Types: Categorize quests (e.g., main, side, optional).
+        * ➡️ Detailed Statuses: Extend `completed` to states like `not_started`, `in_progress`, `failed`.
+        * ➡️ Failure Conditions: Define criteria for quest failure.
+    * ➡️ **Advanced Dependencies**:
+        * ➡️ "OR" Dependencies: Allow quests to be unlocked if one of several prerequisite sets is met.
+        * ➡️ Incompatible Quests: Specify quests that cannot be active or completed simultaneously.
+        * ➡️ Time-Limited Quests: Add start/end availability times.
+    * ✔️ **Configuration Management**: Default filenames used; could be centralized further.
+
+2.  **API Enhancements (FastAPI):**
+    * ➡️ **Pagination**: Implement for endpoints returning lists (`/quests/`, `/quests/available/`).
+    * ➡️ **Filtering & Sorting**: Allow filtering and sorting of quest lists by various attributes.
+    * ➡️ **Partial Updates (PATCH)**: Add an endpoint for modifying specific quest fields.
+    * ✔️ **Structured Error Responses**: FastAPI provides some structure; can be customized for more detail.
+    * ➡️ **Asynchronous Operations**: Consider making file I/O operations in `QuestManager` asynchronous if performance with large datasets becomes a concern. (Current operations are likely fast enough for typical use cases).
+
+3.  **CLI Improvements:**
+    * ➡️ **Interactive Editing**: Allow modification of existing quests field by field.
+    * ➡️ **Text-Based Graph Visualization**: Display quest dependencies in a simple visual format.
+    * ➡️ **Quest Search**: Implement search functionality by ID, title, or description.
+
+4.  **New Systems & Integrations:**
+    * ➡️ **Webhook/Event System**: Notify external systems (via webhooks) upon quest state changes.
+    * ✔️ **Data Versioning/Backup**: Manual via saving to different files; could be automated.
+    * ➡️ **Internationalization (i18n)**: Add support for multiple languages in CLI/API messages.
+
+5.  **Operational & Security Enhancements:**
+    * ✔️ **Enhanced Logging Configuration**: Good foundation with `getenv` for log levels; format and output could be more configurable.
+    * ✔️ **Stricter API Key Handling**: Default key warning exists; could add "production mode" enforcement.
 
 Last updated: May 15, 2025
